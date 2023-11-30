@@ -32,4 +32,5 @@ typedef IntersectionEventNode * IEN;
 int  quadtree_intersections(CollisionWorld* collisionWorld, IntersectionEventList* events);
 void update_rectangles(CollisionWorld* collisionWorld);
 void sort_event_list(IEN list);
+void init_quadtree(CollisionWorld* collisionWorld);
 #endif //SCREENSAVER_QUADTREE_H

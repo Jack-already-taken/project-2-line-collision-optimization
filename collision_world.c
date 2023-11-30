@@ -20,6 +20,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  **/
+#include <cilk/cilk.h>
 
 #include "./collision_world.h"
 
@@ -34,6 +35,13 @@
 //let's include the rect.h and quadtree.h for intersection
 #include "Rectangle.h"
 #include "QuadTree.h"
+
+#ifdef SERIAL
+  #define cilk_for for
+  #define cilk_spawn
+  #define cilk_scope
+  #define cilk_sync
+#endif
 
 void sort_eventlist(IntersectionEventNode *pNode);
 
@@ -134,6 +142,7 @@ void CollisionWorld_lineWallCollision(CollisionWorld* collisionWorld) {
 void CollisionWorld_detectIntersection(CollisionWorld* collisionWorld) {
     IntersectionEventList intersectionEventList = IntersectionEventList_make();
     //detect collisions using our quad tree
+    //init_quadtree(collisionWorld);
     int collisions = quadtree_intersections(collisionWorld,&intersectionEventList);
     //update the collisions
     collisionWorld->numLineLineCollisions += collisions;
@@ -145,6 +154,7 @@ void CollisionWorld_detectIntersection(CollisionWorld* collisionWorld) {
     //collision solver
     IntersectionEventNode * cNode = intersectionEventList.head;
 
+    //printf("-----Frame--------\n");
     while(cNode != NULL){
         CollisionWorld_collisionSolver(collisionWorld,cNode->l1,cNode->l2,cNode->intersectionType);
         cNode = cNode->next;

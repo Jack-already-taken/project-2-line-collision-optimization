@@ -1,6 +1,8 @@
 //
 // Created by yt on 10/30/21.
 //
+#include <cilk/cilk.h>
+
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -14,14 +16,17 @@
 #include "intersection_event_list.h"
 #include "Rectangle.h"
 
-#define BIN_LIMIT 50
+#define BIN_LIMIT 28
 #define DEPTH_LIMIT 7
 #define SIZE_LIMIT 21845
 #define MID(x,y) ((x+y)/2)
-//fwd decl
-void handle_intersections(int index, CollisionWorld *collisionWorld,
-                          IntersectionEventList *intersection_events);
 
+#ifdef SERIAL
+  #define cilk_for for
+  #define cilk_spawn
+  #define cilk_scope
+  #define cilk_sync
+#endif
 
 void ien_merge_nodes(IntersectionEventList * left, IntersectionEventList * right){
     if(right->size == 0){
@@ -42,6 +47,22 @@ void ien_merge_nodes(IntersectionEventList * left, IntersectionEventList * right
     right->head = NULL;
     right->tail = NULL;
 }
+
+void ien_identity(void *value) {
+    *(IntersectionEventList *)value = IntersectionEventList_make();
+}
+
+void ien_reduce(void *left, void *right) {
+    IntersectionEventList *left_ptr = (IntersectionEventList *)left;
+    IntersectionEventList *right_ptr = (IntersectionEventList *)right;
+    ien_merge_nodes(left_ptr, right_ptr);
+}
+
+typedef IntersectionEventList cilk_reducer(ien_identity, ien_reduce) IENReducer;
+
+//fwd decl
+void handle_intersections(int index, CollisionWorld *collisionWorld,
+                          IENReducer *intersection_events);
 
 void update_rectangles(CollisionWorld* collisionWorld) {
     double t = collisionWorld->timeStep;
@@ -169,6 +190,7 @@ static void sort_lines_wrt_quad(Line **lines, int assignment[],
         swap_ind = 0;
         line_ind = quad_start;
     }
+    //printf("Called for %d\n", count);
 }
 
 /**
@@ -221,6 +243,7 @@ static void build_quad_tree(int index, double xmin, double xmax, double ymin,
 
     // new quad trees for children
     int new_depth = depth + 1;
+    //printf("Depth: %d, child0: %d, child1: %d, child2: %d, child3: %d, child4: %d\n", depth, children_sizes[0], children_sizes[1], children_sizes[2], children_sizes[3], children_sizes[4]);
     int child_base = 4 * index + 1;
 
     new_quad_tree(child_base, children_sizes[0], quad_zero_lines);
@@ -246,6 +269,7 @@ static void build_quad_tree(int index, double xmin, double xmax, double ymin,
             build_quad_tree(child_base + 3, x_mid, xmax, y_mid,
                                               ymax, new_depth);
         }
+        cilk_sync;
     }
     return;
 }
@@ -258,7 +282,7 @@ static inline bool _intersects(Line *line1, Line *line2) {
 
 static void update_line_intersection(Line *line1, Line *line2,
                                  CollisionWorld *collisionWorld,
-                                 IntersectionEventList *intersection_events) {
+                                 IENReducer *intersection_events) {
     if (!_intersects(line1, line2)) {
         return;
     }
@@ -270,70 +294,103 @@ static void update_line_intersection(Line *line1, Line *line2,
     }
     IntersectionType iType = intersect(line1, line2, collisionWorld->timeStep);
     if (iType != NO_INTERSECTION) {
-        IntersectionEventList_appendNode(intersection_events, line1, line2, iType);
+        IntersectionEventList *intersection_events_ptr = &(*intersection_events);
+        IntersectionEventList_appendNode(intersection_events_ptr, line1, line2, iType);
     }
 }
 
 static inline void
 update_line_intersection_in_quad_tree(int index, CollisionWorld *collisionWorld,
-                      IntersectionEventList *intersection_events) {
+                      IENReducer *intersection_events) {
+    if (!collision_tree[index].num_lines) {
+        return;
+    }
     Line *line1;
     Line *line2;
-    for (int i = 0; i < collision_tree[index].num_lines; i++) {
-        line1 = collision_tree[index].lines[i];
-        for (int j = i + 1; j < collision_tree[index].num_lines; j++) {
-            line2 = collision_tree[index].lines[j];
-            update_line_intersection(line1, line2, collisionWorld, intersection_events);
+    int grain = 2 * BIN_LIMIT * BIN_LIMIT / collision_tree[index].num_lines;
+    cilk_for (int g = 0; g < collision_tree[index].num_lines; g+=grain) {
+        int upper; 
+        if (g+grain <= collision_tree[index].num_lines) {
+            upper = g+grain;
+        }
+        else {
+            upper = collision_tree[index].num_lines;
+        }
+        for (int i = g; i < upper; i++) {
+            line1 = collision_tree[index].lines[i];
+            for (int j = i + 1; j < collision_tree[index].num_lines; j++) {
+                line2 = collision_tree[index].lines[j];
+                update_line_intersection(line1, line2, collisionWorld, intersection_events);
+            }
         }
     }
 }
 
 static void update_subline_intersections(int index, CollisionWorld *collisionWorld,
-                                IntersectionEventList *intersection_events) {
+                                IENReducer *intersection_events) {
+    if (!collision_tree[index].num_lines) {
+        return;
+    }
     Line *line1;
     Line *line2;
     Line **sublines = collision_tree[index].sublines;
-    for (int i = 0; i < collision_tree[index].num_sublines; i++) {
-        line1 = sublines[i];
-        for (int j = 0; j < collision_tree[index].num_lines; j++) {
-            line2 = collision_tree[index].lines[j];
-            update_line_intersection(line1, line2, collisionWorld, intersection_events);
+    int grain = BIN_LIMIT * BIN_LIMIT / collision_tree[index].num_lines;
+    //printf("line: %d, subline: %d, grain: %d\n", collision_tree[index].num_lines, collision_tree[index].num_sublines, grain);
+    cilk_for (int g = 0; g < collision_tree[index].num_sublines; g+=grain) {
+        int upper; 
+        if (g+grain <= collision_tree[index].num_sublines) {
+            upper = g+grain;
+        }
+        else {
+            upper = collision_tree[index].num_sublines;
+        }
+        for (int i = g; i < upper; i++) {
+            line1 = sublines[i];
+            for (int j = 0; j < collision_tree[index].num_lines; j++) {
+                line2 = collision_tree[index].lines[j];
+                update_line_intersection(line1, line2, collisionWorld, intersection_events);
+            }
         }
     }
+    
 }
 
 static void subline_intersections(int index, CollisionWorld *collisionWorld,
-                             IntersectionEventList *intersection_events) {
+                             IENReducer *intersection_events) {
     int child_base = 4 * index + 1;
-    for (int i = 0; i < 4; i++) {
+    cilk_for (int i = 0; i < 4; i++) {
+        //printf("%d\n", child_base + i);
         handle_intersections(child_base + i, collisionWorld, intersection_events);
     }
 }
 
 //handle all quad tree
 void handle_intersections(int index, CollisionWorld *collisionWorld,
-                          IntersectionEventList *intersection_events) {
+                          IENReducer *intersection_events) {
 
     if (collision_tree[index].sublines != NULL) {
         // handle quadtree pairs
-        update_line_intersection_in_quad_tree(index, collisionWorld,
+        cilk_spawn update_line_intersection_in_quad_tree(index, collisionWorld,
                                          intersection_events);
         //handle tree at this node
-        update_subline_intersections(index, collisionWorld, intersection_events);
+        cilk_spawn update_subline_intersections(index, collisionWorld, intersection_events);
         // recurse
         subline_intersections(index, collisionWorld, intersection_events);
     } else {
         //handle all pairs we have leafs...
         update_line_intersection_in_quad_tree(index, collisionWorld, intersection_events);
     }
+    cilk_sync;
 }
 
 int quadtree_intersections(
         CollisionWorld *collisionWorld,
         IntersectionEventList *intersection_events) {
+    IENReducer intersection_events_reducer = IntersectionEventList_make();
     new_quad_tree(0, collisionWorld->numOfLines, collisionWorld->lines);
     build_quad_tree(0, BOX_XMIN, BOX_XMAX, BOX_YMIN, BOX_YMAX, 0);
-    handle_intersections(0, collisionWorld, intersection_events);
+    handle_intersections(0, collisionWorld, __builtin_addressof(intersection_events_reducer));
+    ien_merge_nodes(intersection_events, &(intersection_events_reducer));
     int num_collisions = intersection_events->size;
     return num_collisions;
 }

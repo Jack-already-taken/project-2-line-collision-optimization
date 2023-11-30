@@ -1,0 +1,7 @@
+Number of frames = 4000
+Input file path is: input/mit.in
+---- RESULTS ----
+Elapsed execution time: 1.205467s
+1262 Line-Wall Collisions
+19806 Line-Line Collisions
+---- END RESULTS ----

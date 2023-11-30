@@ -26,6 +26,7 @@
 
 #include "./line.h"
 #include "./collision_world.h"
+#include "./QuadTree.h"
 
 struct LineDemo {
   // Iteration counter

@@ -30,6 +30,10 @@
 // Detect if lines l1 and l2 will intersect between now and the next time step.
 IntersectionType intersect(Line *l1, Line *l2, double time) {
   assert(compareLines(l1, l2) < 0);
+  
+  if (intersectLines(l1->p1, l1->p2, l2->p1, l2->p2)) {
+    return ALREADY_INTERSECTED;
+  }
 
   Vec velocity;
   Vec p1;
@@ -48,9 +52,11 @@ IntersectionType intersect(Line *l1, Line *l2, double time) {
   bool top_intersected = false;
   bool bottom_intersected = false;
 
-  if (intersectLines(l1->p1, l1->p2, l2->p1, l2->p2)) {
-    return ALREADY_INTERSECTED;
+  if (pointInParallelogram(l1->p1, l2->p1, l2->p2, p1, p2)
+      && pointInParallelogram(l1->p2, l2->p1, l2->p2, p1, p2)) {
+    return L1_WITH_L2;
   }
+
   if (intersectLines(l1->p1, l1->p2, p1, p2)) {
     num_line_intersections++;
   }
@@ -65,11 +71,6 @@ IntersectionType intersect(Line *l1, Line *l2, double time) {
 
   if (num_line_intersections == 2) {
     return L2_WITH_L1;
-  }
-
-  if (pointInParallelogram(l1->p1, l2->p1, l2->p2, p1, p2)
-      && pointInParallelogram(l1->p2, l2->p1, l2->p2, p1, p2)) {
-    return L1_WITH_L2;
   }
 
   if (num_line_intersections == 0) {

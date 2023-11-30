@@ -45,6 +45,7 @@ Rect move_rect(const Line* diagonal, double step){
 
 bool intersects(const Rect* rect_fst, const Rect* rect_snd)
 {
+
     bool y_fst_over_snd = rect_fst->upper.y - rect_snd->lower.y < -EPSILON;
     bool y_snd_over_fst = rect_snd->upper.y - rect_fst->lower.y < -EPSILON;
     bool x_fst_left_snd = rect_fst->upper.x - rect_snd->lower.x < -EPSILON;
@@ -56,5 +57,10 @@ bool intersects(const Rect* rect_fst, const Rect* rect_snd)
     bool no_intersection = no_intersection_in_x && no_intersection_in_y;
 
     return !no_intersection;
-
+    /*
+    return ((!rect_fst->upper.y - rect_snd->lower.y < -EPSILON
+            && !rect_snd->upper.y - rect_fst->lower.y < -EPSILON)
+            || (!rect_fst->upper.x - rect_snd->lower.x < -EPSILON
+            && !rect_snd->upper.x - rect_fst->lower.x < -EPSILON));
+            */
 }
